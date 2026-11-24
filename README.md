@@ -2,23 +2,24 @@
 
 > Open-source, self-hosted AI IT administration platform for user provisioning, infrastructure health monitoring, access control audits, and incident triage ticketing.
 
-**Roadmap Stage:** Phase 1 — Core Professional & Enterprise Operations · **Status:** Initialized Starter Scaffold
+**Roadmap Stage:** Phase 1 — Core Professional & Enterprise Operations · **Status:** Implemented MVP
 
-## Planned Core Capabilities
+## Core Capabilities
 
-- **User Provisioning:** Joiner/mover/leaver role templates with least-privilege SCIM/Okta change previews.
-- **Health Monitoring:** Service telemetry correlation, certificate/quota warnings, and runbook lookup.
-- **Access Control Audits:** Stale token, orphaned account, and privilege-drift detection across SaaS apps.
-- **Incident Triage:** Alert deduplication, severity classification, and cited root-cause hypotheses.
+- **Identity & SCIM Provisioning (`/api/v1/identity`):** Joiner/mover/leaver least-privilege role templates, SCIM 2.0 dry-run diff previews, extra-app privilege deviation warnings, and HITL-gated atomic directory/entitlement updates.
+- **Health Monitoring & Incident Triage (`/api/v1/telemetry`):** Service telemetry ingestion, TLS certificate expiry and quota alerts, fingerprint-based alert deduplication, severity classification, and cited runbook triage.
+- **Access Control Audits (`/api/v1/access-audit`):** Automated SaaS entitlement scans detecting orphaned accounts, stale API tokens, privilege drift, and missing MFA with approval-gated remediation.
+- **Runbooks RAG & Advisory Remediation (`/api/v1/runbooks`):** Deterministic hybrid vector + keyword retrieval and citation-grounded incident remediation drafts permanently locked to `advisory_only` with zero blind shell execution.
+- **Governance & Guardrails (`/api/v1/governance`):** Unified HITL approval queue (`viewer`, `operator`, `it_approver`, `admin` RBAC), tamper-evident SHA-256 hash-chained audit trail verification, and outbound cloud secret/PII scrubbing (`LLM_REDACT_PII_FOR_CLOUD=true`).
 
 ## Architecture & Engineering Standards
 
-- **Backend (`backend/`):** Python 3.12+, FastAPI, Pydantic v2, typed settings with production fail-fast validation, pure ASGI security-header middleware, and versioned `/api/v1/health` probes.
-- **Frontend (`frontend/`):** React 18, TypeScript, Vite, Tailwind CSS, and Vitest + Testing Library unit tests served behind unprivileged Nginx in production.
-- **Privacy & AI Guardrails:** Offline deterministic `mock` mode for CI/dev, local-first open-weights Ollama support, and cloud PII-redaction switches enabled by default.
+- **Backend (`backend/`):** Python 3.12+, FastAPI, Pydantic v2, async SQLAlchemy 2.0 + Alembic migrations, typed settings with production fail-fast validation, pure ASGI security-header middleware, and `/api/v1/health` (`/live`, `/ready`) probes.
+- **Frontend (`frontend/`):** React 18, TypeScript, Vite, Tailwind CSS control plane across 6 modules (`Overview`, `Identity & SCIM`, `Health & Triage`, `Access Audits`, `Runbooks RAG`, `Approvals & Audit`) with Vitest + Testing Library unit tests served behind unprivileged Nginx in production.
+- **Privacy & AI Routing (`backend/app/llm/`):** Offline deterministic `mock` mode for CI/dev, local-first open-weights Ollama adapter, and PII/secret-redacted cloud Gemini fallback.
 - **Containers & CI (`.github/workflows/ci.yml`):** Multi-stage Dockerfiles, PostgreSQL (`pgvector`) + Redis Compose topology, Ruff + Mypy + Pytest checks, TypeScript + Vitest + Vite build, `npm audit`, and Trivy filesystem scanning.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the domain module plan.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full module and security architecture.
 
 ## Quickstart
 
@@ -29,13 +30,14 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
 Verify lint, types, and tests:
 
 ```bash
-ruff check app tests
+ruff check app tests alembic
 mypy app
 pytest -v
 ```
