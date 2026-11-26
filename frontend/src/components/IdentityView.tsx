@@ -1,11 +1,16 @@
 import { useState } from 'react';
-import { Check, ShieldAlert, UserPlus, X } from 'lucide-react';
-import { decideApproval, previewProvisioningPlan } from '../api/client';
+import { Check, FileCode2, ShieldAlert, UserPlus, X } from 'lucide-react';
+import {
+  decideApproval,
+  fetchPlanScimPayload,
+  previewProvisioningPlan,
+} from '../api/client';
 import type {
   ActorContext,
   DirectoryUser,
   ProvisioningPlan,
   RoleTemplate,
+  ScimBulkPayload,
 } from '../types/itAdmin';
 import { StatusBadge } from './StatusBadge';
 
@@ -37,8 +42,31 @@ export function IdentityView({
   const [extraRole, setExtraRole] = useState('admin');
   const [extraPrivileged, setExtraPrivileged] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [scimPayloads, setScimPayloads] = useState<Record<string, ScimBulkPayload>>({});
+  const [expandedScimId, setExpandedScimId] = useState<string | null>(null);
 
   const canApprove = actor.role === 'it_approver' || actor.role === 'admin';
+
+  async function handleExportScim(planId: string) {
+    if (expandedScimId === planId) {
+      setExpandedScimId(null);
+      return;
+    }
+    if (scimPayloads[planId]) {
+      setExpandedScimId(planId);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const payload = await fetchPlanScimPayload(actor, planId);
+      setScimPayloads((prev) => ({ ...prev, [planId]: payload }));
+      setExpandedScimId(planId);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Failed to export SCIM payload', true);
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handlePreview(e: React.FormEvent) {
     e.preventDefault();
@@ -262,28 +290,39 @@ export function IdentityView({
                   </p>
                 </div>
 
-                {plan.status === 'pending_approval' && plan.approval_id && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={!canApprove || submitting}
-                      onClick={() => handleDecision(plan.approval_id!, 'approved')}
-                      className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
-                    >
-                      <Check className="h-3.5 w-3.5" />
-                      Approve &amp; Apply
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!canApprove || submitting}
-                      onClick={() => handleDecision(plan.approval_id!, 'rejected')}
-                      className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-40"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                      Reject
-                    </button>
-                  </div>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => handleExportScim(plan.id)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    <FileCode2 className="h-3.5 w-3.5" />
+                    {expandedScimId === plan.id ? 'Hide SCIM JSON' : 'Export SCIM 2.0 JSON'}
+                  </button>
+                  {plan.status === 'pending_approval' && plan.approval_id && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={!canApprove || submitting}
+                        onClick={() => handleDecision(plan.approval_id!, 'approved')}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                        Approve &amp; Apply
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canApprove || submitting}
+                        onClick={() => handleDecision(plan.approval_id!, 'rejected')}
+                        className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 disabled:opacity-40"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        Reject
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {plan.least_privilege_warnings_json.length > 0 && (
@@ -321,6 +360,17 @@ export function IdentityView({
                 ))}
               </div>
               <p className="mt-2.5 text-[11px] text-slate-500">{plan.llm_rationale}</p>
+
+              {expandedScimId === plan.id && scimPayloads[plan.id] && (
+                <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-3 text-[11px] text-emerald-300">
+                  <div className="mb-1.5 font-semibold text-slate-200">
+                    RFC 7644 SCIM 2.0 BulkRequest Payload
+                  </div>
+                  <pre className="max-h-60 overflow-auto font-mono">
+                    {JSON.stringify(scimPayloads[plan.id], null, 2)}
+                  </pre>
+                </div>
+              )}
             </article>
           ))
         )}

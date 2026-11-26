@@ -18,6 +18,7 @@ import {
   fetchEntitlements,
   fetchHealth,
   fetchIncidents,
+  fetchNotificationWebhooks,
   fetchOverview,
   fetchProvisioningPlans,
   fetchRemediationDrafts,
@@ -44,6 +45,7 @@ import type {
   DirectoryUser,
   HealthStatus,
   Incident,
+  NotificationWebhook,
   OverviewSummary,
   ProvisioningPlan,
   RemediationDraft,
@@ -96,6 +98,7 @@ export default function App() {
   const [approvals, setApprovals] = useState<ApprovalRequestItem[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEventItem[]>([]);
   const [chainStatus, setChainStatus] = useState<AuditChainVerify | null>(null);
+  const [webhooks, setWebhooks] = useState<NotificationWebhook[]>([]);
 
   const notify = useCallback((text: string, isError = false) => {
     setBanner({ text, isError });
@@ -119,6 +122,7 @@ export default function App() {
         apps,
         evs,
         chain,
+        whs,
       ] = await Promise.all([
         fetchOverview(actor),
         fetchRoleTemplates(actor),
@@ -135,6 +139,7 @@ export default function App() {
         fetchApprovals(actor),
         fetchAuditEvents(actor),
         verifyAuditChain(actor),
+        fetchNotificationWebhooks(actor),
       ]);
       setOverview(ov);
       setTemplates(tmpls);
@@ -151,6 +156,7 @@ export default function App() {
       setApprovals(apps);
       setAuditEvents(evs);
       setChainStatus(chain);
+      setWebhooks(whs);
     } catch {
       // Keep UI resilient if secondary APIs are unavailable during offline preview
     }
@@ -365,6 +371,7 @@ export default function App() {
             approvals={approvals}
             auditEvents={auditEvents}
             chainStatus={chainStatus}
+            webhooks={webhooks}
             onChainVerified={setChainStatus}
             onRefresh={refreshWorkspace}
             onNotify={notify}

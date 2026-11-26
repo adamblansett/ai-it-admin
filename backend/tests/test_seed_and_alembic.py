@@ -84,6 +84,7 @@ def test_alembic_initial_migration_creates_all_tables(tmp_path: Path) -> None:
         "runbooks",
         "remediation_drafts",
         "audit_events",
+        "notification_webhooks",
         "alembic_version",
     }
     assert expected <= tables

@@ -11,8 +11,13 @@ from app.identity.schemas import (
     ProvisioningPreviewIn,
     RoleTemplateCreateIn,
     RoleTemplateOut,
+    ScimBulkRequestOut,
 )
-from app.identity.service import create_role_template, preview_provisioning_plan
+from app.identity.service import (
+    create_role_template,
+    export_plan_scim_bulk_payload,
+    preview_provisioning_plan,
+)
 from app.llm.router import LLMRouter, get_llm_router
 
 router = APIRouter(prefix="/identity", tags=["identity"])
@@ -100,3 +105,13 @@ async def post_preview_provisioning_plan(
         actor=actor,
     )
     return ProvisioningPlanOut.model_validate(plan)
+
+
+@router.get("/plans/{plan_id}/scim-payload", response_model=ScimBulkRequestOut)
+async def get_plan_scim_payload(
+    plan_id: str,
+    _: Actor = Depends(get_current_actor),
+    db: AsyncSession = Depends(get_db),
+) -> ScimBulkRequestOut:
+    """Export a provisioning plan as an RFC 7644 SCIM 2.0 BulkRequest JSON payload."""
+    return await export_plan_scim_bulk_payload(db, plan_id=plan_id)

@@ -10,6 +10,8 @@ import type {
   DirectoryUser,
   HealthStatus,
   Incident,
+  NotificationWebhook,
+  NotificationWebhookCreateInput,
   OverviewSummary,
   PiiRedactResult,
   ProvisioningPlan,
@@ -21,9 +23,11 @@ import type {
   RunbookItem,
   RunbookSearchHit,
   SaaSEntitlement,
+  ScimBulkPayload,
   SeedSummary,
   ServiceCheck,
   TelemetryAlert,
+  WebhookTestResult,
 } from '../types/itAdmin';
 
 export class ApiClientError extends Error {
@@ -286,4 +290,55 @@ export function redactPiiText(actor: ActorContext, text: string): Promise<PiiRed
     method: 'POST',
     body: JSON.stringify({ text }),
   });
+}
+
+export function fetchPlanScimPayload(
+  actor: ActorContext,
+  planId: string,
+): Promise<ScimBulkPayload> {
+  return requestJson<ScimBulkPayload>(`/api/v1/identity/plans/${planId}/scim-payload`, actor);
+}
+
+export function fetchNotificationWebhooks(
+  actor: ActorContext,
+): Promise<NotificationWebhook[]> {
+  return requestJson<NotificationWebhook[]>('/api/v1/integrations/webhooks', actor);
+}
+
+export function createNotificationWebhook(
+  actor: ActorContext,
+  payload: NotificationWebhookCreateInput,
+): Promise<NotificationWebhook> {
+  return requestJson<NotificationWebhook>('/api/v1/integrations/webhooks', actor, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function testNotificationWebhook(
+  actor: ActorContext,
+  webhookId: string,
+  message?: string,
+  dryRun = true,
+): Promise<WebhookTestResult> {
+  return requestJson<WebhookTestResult>(
+    `/api/v1/integrations/webhooks/${webhookId}/test`,
+    actor,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        event_type: 'incident.triaged',
+        message: message || 'Test notification from AI IT Administrator control plane.',
+        dry_run: dryRun,
+      }),
+    },
+  );
+}
+
+export async function fetchPrometheusMetrics(): Promise<string> {
+  const response = await fetch('/api/v1/metrics');
+  if (!response.ok) {
+    throw new ApiClientError('Failed to fetch Prometheus metrics', response.status);
+  }
+  return response.text();
 }

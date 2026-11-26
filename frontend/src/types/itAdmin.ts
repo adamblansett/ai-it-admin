@@ -372,3 +372,52 @@ export interface SeedSummary {
   directory_users?: number;
   services?: number;
 }
+
+export interface ScimBulkOperation {
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE' | string;
+  path: string;
+  bulkId: string;
+  data: Record<string, unknown>;
+}
+
+export interface ScimBulkPayload {
+  schemas: string[];
+  failOnErrors: number;
+  plan_id: string;
+  plan_type: string;
+  scim_provider: string;
+  Operations: ScimBulkOperation[];
+}
+
+export interface NotificationWebhook {
+  id: string;
+  name: string;
+  channel_type: 'slack' | 'pagerduty' | 'generic' | string;
+  target_url: string;
+  subscribed_events_json: string[];
+  enabled: boolean;
+  signing_secret_configured: boolean;
+  last_delivery_status: string | null;
+  last_delivered_at: string | null;
+  created_by: string;
+  created_at: string;
+}
+
+export interface NotificationWebhookCreateInput {
+  name: string;
+  channel_type: 'slack' | 'pagerduty' | 'generic';
+  target_url: string;
+  subscribed_events?: string[];
+  enabled?: boolean;
+}
+
+export interface WebhookTestResult {
+  webhook_id: string;
+  channel_type: string;
+  target_url: string;
+  dry_run: boolean;
+  delivery_status: string;
+  pii_redacted_count: number;
+  headers_preview: Record<string, string>;
+  payload_preview: Record<string, unknown>;
+}

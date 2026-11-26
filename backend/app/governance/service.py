@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from typing import Any, Literal
@@ -52,6 +53,20 @@ def compute_event_hash(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+_AUDIT_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _get_audit_lock() -> asyncio.Lock:
+    """Return an asyncio.Lock bound to the currently running event loop."""
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    lock = _AUDIT_LOCKS.get(loop_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _AUDIT_LOCKS[loop_id] = lock
+    return lock
+
+
 async def record_audit_event(
     db: AsyncSession,
     *,
@@ -63,39 +78,40 @@ async def record_audit_event(
     details: dict[str, Any] | None = None,
 ) -> AuditEvent:
     """Append an immutable SHA-256 hash-chained event to the operational audit log."""
-    stmt = select(AuditEvent).order_by(AuditEvent.sequence_no.desc()).limit(1)
-    latest = (await db.execute(stmt)).scalar_one_or_none()
+    async with _get_audit_lock():
+        stmt = select(AuditEvent).order_by(AuditEvent.sequence_no.desc()).limit(1)
+        latest = (await db.execute(stmt)).scalar_one_or_none()
 
-    next_seq = (latest.sequence_no + 1) if latest is not None else 1
-    prev_hash = latest.event_hash if latest is not None else "GENESIS"
-    clean_details = details or {}
+        next_seq = (latest.sequence_no + 1) if latest is not None else 1
+        prev_hash = latest.event_hash if latest is not None else "GENESIS"
+        clean_details = details or {}
 
-    event_hash = compute_event_hash(
-        sequence_no=next_seq,
-        event_type=event_type,
-        actor_email=actor.email,
-        actor_role=actor.role,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        action=action,
-        details=clean_details,
-        prev_hash=prev_hash,
-    )
-    event = AuditEvent(
-        sequence_no=next_seq,
-        event_type=event_type,
-        actor_email=actor.email,
-        actor_role=actor.role,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        action=action,
-        details_json=clean_details,
-        prev_hash=prev_hash,
-        event_hash=event_hash,
-    )
-    db.add(event)
-    await db.flush()
-    return event
+        event_hash = compute_event_hash(
+            sequence_no=next_seq,
+            event_type=event_type,
+            actor_email=actor.email,
+            actor_role=actor.role,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            details=clean_details,
+            prev_hash=prev_hash,
+        )
+        event = AuditEvent(
+            sequence_no=next_seq,
+            event_type=event_type,
+            actor_email=actor.email,
+            actor_role=actor.role,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            action=action,
+            details_json=clean_details,
+            prev_hash=prev_hash,
+            event_hash=event_hash,
+        )
+        db.add(event)
+        await db.flush()
+        return event
 
 
 async def verify_audit_chain(db: AsyncSession) -> AuditChainVerifyOut:

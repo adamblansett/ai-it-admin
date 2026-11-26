@@ -15,6 +15,7 @@ from app.db.models import (
     AuditEvent,
     DirectoryUser,
     Incident,
+    NotificationWebhook,
     ProvisioningPlan,
     RemediationDraft,
     RoleTemplate,
@@ -25,6 +26,8 @@ from app.db.models import (
 )
 from app.identity.schemas import ProvisioningPreviewIn, RoleAppGrant
 from app.identity.service import preview_provisioning_plan
+from app.integrations.schemas import NotificationWebhookCreateIn
+from app.integrations.service import create_notification_webhook
 from app.llm.embeddings import compute_deterministic_embedding
 from app.llm.router import LLMRouter
 from app.runbooks.schemas import RemediationAssistIn
@@ -34,6 +37,7 @@ from app.telemetry.service import ingest_alert, triage_incident
 
 _DELETE_ORDER = (
     AuditEvent,
+    NotificationWebhook,
     RemediationDraft,
     AccessFinding,
     AccessAuditRun,
@@ -715,6 +719,21 @@ async def seed_demo_dataset(
             service_name="auth-gateway",
             request_approval=True,
         ),
+        actor=actor,
+    )
+
+    # Seed 1 SSRF-validated outbound Slack notification connector
+    await create_notification_webhook(
+        db,
+        payload=NotificationWebhookCreateIn(
+            name="SRE On-Call Slack",
+            channel_type="slack",
+            target_url="https://hooks.slack.com/services/T00000000/B00000000/DEMOEXAMPLETOKEN",
+            subscribed_events=["incident.triaged", "approval.pending"],
+            enabled=True,
+            signing_secret_configured=bool(settings.webhook_secret.strip()),
+        ),
+        settings=settings,
         actor=actor,
     )
 

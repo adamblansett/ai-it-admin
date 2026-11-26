@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import Actor
 from app.db.models import DirectoryUser, ProvisioningPlan, RoleTemplate, SaaSEntitlement
 from app.governance.service import create_approval_request, record_audit_event
-from app.identity.schemas import ProvisioningPreviewIn, RoleTemplateCreateIn
+from app.identity.schemas import (
+    ProvisioningPreviewIn,
+    RoleTemplateCreateIn,
+    ScimBulkOperation,
+    ScimBulkRequestOut,
+)
 from app.llm.router import LLMRouter
 
 
@@ -451,3 +456,125 @@ async def preview_provisioning_plan(
     await db.commit()
     await db.refresh(plan)
     return plan
+
+
+async def export_plan_scim_bulk_payload(
+    db: AsyncSession,
+    *,
+    plan_id: str,
+) -> ScimBulkRequestOut:
+    """Transform a ProvisioningPlan into an RFC 7644 SCIM 2.0 BulkRequest payload."""
+    plan = await db.get(ProvisioningPlan, plan_id)
+    if plan is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Provisioning plan '{plan_id}' not found.",
+        )
+
+    operations: list[ScimBulkOperation] = []
+    for idx, op in enumerate(plan.scim_diff_json, start=1):
+        action = str(op.get("action", ""))
+        target = str(op.get("target", ""))
+        details = dict(op.get("details") or {})
+        privileged = bool(op.get("privileged", False))
+        bulk_id = f"op-{idx}"
+
+        if action == "create_user":
+            operations.append(
+                ScimBulkOperation(
+                    method="POST",
+                    path="/Users",
+                    bulkId=bulk_id,
+                    data={
+                        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                        "userName": target,
+                        "displayName": details.get("full_name", plan.target_name),
+                        "active": True,
+                        "title": details.get("role_template", plan.to_role_code),
+                        "emails": [{"value": target, "primary": True}],
+                    },
+                )
+            )
+        elif action == "update_user":
+            operations.append(
+                ScimBulkOperation(
+                    method="PATCH",
+                    path=f"/Users/{target}",
+                    bulkId=bulk_id,
+                    data={
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "value": details}],
+                    },
+                )
+            )
+        elif action == "suspend_user":
+            operations.append(
+                ScimBulkOperation(
+                    method="PATCH",
+                    path=f"/Users/{target}",
+                    bulkId=bulk_id,
+                    data={
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [{"op": "replace", "path": "active", "value": False}],
+                    },
+                )
+            )
+        elif action in ("add_group", "remove_group"):
+            operations.append(
+                ScimBulkOperation(
+                    method="PATCH",
+                    path=f"/Groups/{target}",
+                    bulkId=bulk_id,
+                    data={
+                        "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                        "Operations": [
+                            {
+                                "op": "add" if action == "add_group" else "remove",
+                                "path": "members",
+                                "value": [{"value": details.get("member", plan.target_email)}],
+                            }
+                        ],
+                    },
+                )
+            )
+        elif action == "grant_app":
+            operations.append(
+                ScimBulkOperation(
+                    method="POST",
+                    path="/Entitlements",
+                    bulkId=bulk_id,
+                    data={
+                        "application": target,
+                        "user": plan.target_email,
+                        "privileged": privileged,
+                        **details,
+                    },
+                )
+            )
+        elif action == "revoke_app":
+            operations.append(
+                ScimBulkOperation(
+                    method="DELETE",
+                    path=f"/Entitlements/{target}",
+                    bulkId=bulk_id,
+                    data={"user": plan.target_email, **details},
+                )
+            )
+        else:
+            operations.append(
+                ScimBulkOperation(
+                    method="DELETE" if action.startswith("revoke") else "POST",
+                    path="/Policies",
+                    bulkId=bulk_id,
+                    data={"action": action, "target": target, **details},
+                )
+            )
+
+    return ScimBulkRequestOut(
+        schemas=["urn:ietf:params:scim:api:messages:2.0:BulkRequest"],
+        failOnErrors=1,
+        plan_id=plan.id,
+        plan_type=plan.plan_type,
+        scim_provider=plan.scim_provider,
+        Operations=operations,
+    )

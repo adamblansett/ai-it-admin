@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     auth_secret_key: str = _DEFAULT_DEV_SECRET
     auth_require_token: bool = False
 
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 120
+    webhook_secret: str = ""
+    redis_url: str = ""
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

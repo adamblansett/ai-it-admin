@@ -105,3 +105,22 @@ class IncidentOut(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+
+
+class AlertmanagerAlertItem(BaseModel):
+    status: str = "firing"
+    labels: dict[str, str] = Field(default_factory=dict)
+    annotations: dict[str, str] = Field(default_factory=dict)
+    startsAt: str | None = None
+
+
+class AlertmanagerWebhookIn(BaseModel):
+    status: str = "firing"
+    alerts: list[AlertmanagerAlertItem] = Field(default_factory=list)
+
+
+class AlertmanagerWebhookOut(BaseModel):
+    processed: int
+    firing_ingested: int
+    deduplicated: int
+    resolved: int

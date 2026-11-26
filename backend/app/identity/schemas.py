@@ -85,3 +85,19 @@ class ProvisioningPlanOut(BaseModel):
     requested_by: str
     created_at: datetime
     applied_at: datetime | None = None
+
+
+class ScimBulkOperation(BaseModel):
+    method: Literal["POST", "PUT", "PATCH", "DELETE"]
+    path: str
+    bulkId: str
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScimBulkRequestOut(BaseModel):
+    schemas: list[str]
+    failOnErrors: int = 1
+    plan_id: str
+    plan_type: str
+    scim_provider: str
+    Operations: list[ScimBulkOperation]

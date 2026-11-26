@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import Actor, get_current_actor, require_roles
+from app.core.auth import Actor, get_current_actor, require_roles, resolve_settings
 from app.core.config import Settings, get_settings
 from app.db.models import Incident, ServiceCheck, TelemetryAlert
 from app.db.session import get_db
@@ -10,6 +10,8 @@ from app.llm.router import LLMRouter, get_llm_router
 from app.telemetry.schemas import (
     AlertIngestIn,
     AlertIngestOut,
+    AlertmanagerWebhookIn,
+    AlertmanagerWebhookOut,
     IncidentOut,
     IncidentStatusUpdateIn,
     IncidentTriageIn,
@@ -21,8 +23,10 @@ from app.telemetry.service import (
     enrich_service_check,
     ingest_alert,
     ingest_service_check,
+    process_alertmanager_webhook,
     triage_incident,
     update_incident_status,
+    verify_alertmanager_signature,
 )
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
@@ -130,3 +134,23 @@ async def patch_incident_status(
         actor=actor,
     )
     return IncidentOut.model_validate(incident)
+
+
+@router.post("/webhooks/alertmanager", response_model=AlertmanagerWebhookOut)
+async def post_alertmanager_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> AlertmanagerWebhookOut:
+    """Receive HMAC-signed Prometheus Alertmanager webhook events."""
+    settings = resolve_settings(request)
+    raw_body = await request.body()
+    sig_header = request.headers.get("x-webhook-signature", "")
+    verify_alertmanager_signature(raw_body, sig_header, settings)
+    try:
+        payload = AlertmanagerWebhookIn.model_validate_json(raw_body)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Invalid Alertmanager webhook payload: {exc}",
+        ) from exc
+    return await process_alertmanager_webhook(db, payload=payload)

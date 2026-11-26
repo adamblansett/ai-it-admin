@@ -8,7 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_v1_router
 from app.core.auth import Actor
 from app.core.config import Settings, get_settings, validate_production_security
+from app.core.logging import configure_logging
+from app.core.metrics import MetricsRegistry
 from app.core.middleware import SecurityHeadersMiddleware
+from app.core.rate_limit import RateLimitMiddleware
 from app.db.session import build_engine, build_session_factory, ensure_db_initialized
 from app.llm.router import LLMRouter
 from app.seed.demo_data import seed_demo_dataset
@@ -41,9 +44,11 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     """Construct and configure the FastAPI application."""
     cfg = settings_override or get_settings()
     validate_production_security(cfg)
+    configure_logging(cfg.log_level)
 
     engine = build_engine(cfg.database_url)
     session_factory = build_session_factory(engine)
+    metrics = MetricsRegistry()
 
     application = FastAPI(
         title=cfg.app_name,
@@ -61,6 +66,7 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     application.state.db_init_lock = asyncio.Lock()
     application.state.db_initialized = False
     application.state.llm_router = LLMRouter(cfg)
+    application.state.metrics = metrics
 
     application.add_middleware(
         CORSMiddleware,
@@ -69,7 +75,10 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    application.add_middleware(SecurityHeadersMiddleware, settings=cfg)
+    # Add RateLimitMiddleware before SecurityHeadersMiddleware so security headers
+    # and X-Request-ID are still injected on 429 responses (Starlette LIFO order).
+    application.add_middleware(RateLimitMiddleware, settings=cfg)
+    application.add_middleware(SecurityHeadersMiddleware, settings=cfg, metrics=metrics)
     application.include_router(api_v1_router, prefix=cfg.api_v1_prefix)
     return application
 

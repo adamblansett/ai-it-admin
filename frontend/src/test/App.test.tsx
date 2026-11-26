@@ -138,7 +138,38 @@ function createFetchRouter() {
       ]);
     }
     if (url === '/api/v1/identity/plans') {
-      return jsonResponse([]);
+      return jsonResponse([
+        {
+          id: 'plan-1',
+          plan_type: 'joiner',
+          target_email: 'jordan.rivera@acme-it.local',
+          target_name: 'Jordan Rivera',
+          department: 'Engineering',
+          from_role_code: null,
+          to_role_code: 'eng-backend',
+          scim_provider: 'okta',
+          scim_diff_json: [],
+          least_privilege_warnings_json: [],
+          risk_level: 'high',
+          llm_rationale: 'SCIM dry-run reviewed.',
+          llm_provider: 'mock',
+          status: 'pending_approval',
+          approval_id: 'app-1',
+          requested_by: 'operator@acme-it.local',
+          created_at: '2026-11-24T12:00:00Z',
+          applied_at: null,
+        },
+      ]);
+    }
+    if (url === '/api/v1/identity/plans/plan-1/scim-payload') {
+      return jsonResponse({
+        schemas: ['urn:ietf:params:scim:api:messages:2.0:BulkRequest'],
+        failOnErrors: 1,
+        plan_id: 'plan-1',
+        plan_type: 'joiner',
+        scim_provider: 'okta',
+        Operations: [{ method: 'POST', path: '/Users', bulkId: 'op-1', data: {} }],
+      });
     }
     if (url === '/api/v1/identity/plans/preview' && init?.method === 'POST') {
       return jsonResponse({
@@ -271,6 +302,35 @@ function createFetchRouter() {
         message: 'All 8 audit events verified intact.',
       });
     }
+    if (url === '/api/v1/integrations/webhooks') {
+      return jsonResponse([
+        {
+          id: 'wh-1',
+          name: 'SRE On-Call Slack',
+          channel_type: 'slack',
+          target_url: 'https://hooks.slack.com/services/T00000000/B00000000/DEMOEXAMPLETOKEN',
+          subscribed_events_json: ['incident.triaged'],
+          enabled: true,
+          signing_secret_configured: false,
+          last_delivery_status: null,
+          last_delivered_at: null,
+          created_by: 'it-approver@acme-it.local',
+          created_at: '2026-11-24T12:00:00Z',
+        },
+      ]);
+    }
+    if (url === '/api/v1/integrations/webhooks/wh-1/test' && init?.method === 'POST') {
+      return jsonResponse({
+        webhook_id: 'wh-1',
+        channel_type: 'slack',
+        target_url: 'https://hooks.slack.com/services/T00000000/B00000000/DEMOEXAMPLETOKEN',
+        dry_run: true,
+        delivery_status: 'dry_run_ok',
+        pii_redacted_count: 2,
+        headers_preview: { 'Content-Type': 'application/json' },
+        payload_preview: { text: '[AI IT Admin] scrubbed' },
+      });
+    }
     return jsonResponse({ detail: `Unhandled route: ${url}` }, 404);
   });
 }
@@ -321,6 +381,12 @@ describe('AI IT Administrator control plane', () => {
       );
     });
 
+    // Export SCIM 2.0 RFC 7644 BulkRequest JSON
+    fireEvent.click(screen.getByRole('button', { name: /Export SCIM 2\.0 JSON/i }));
+    await waitFor(() => {
+      expect(screen.getByText(/RFC 7644 SCIM 2\.0 BulkRequest Payload/i)).toBeInTheDocument();
+    });
+
     // Navigate to Health & Triage
     fireEvent.click(screen.getByRole('button', { name: /Health & Triage/i }));
     expect(screen.getByText(/edge-ingress/i)).toBeInTheDocument();
@@ -357,6 +423,15 @@ describe('AI IT Administrator control plane', () => {
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/v1/governance/approvals/app-1/decide',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    // Dry-run test notification webhook
+    fireEvent.click(screen.getByRole('button', { name: /Dry-Run Test/i }));
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/v1/integrations/webhooks/wh-1/test',
         expect.objectContaining({ method: 'POST' }),
       );
     });

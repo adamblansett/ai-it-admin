@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -13,6 +14,8 @@ from app.llm.router import LLMRouter
 from app.runbooks.service import hybrid_search_runbooks
 from app.telemetry.schemas import (
     AlertIngestIn,
+    AlertmanagerWebhookIn,
+    AlertmanagerWebhookOut,
     IncidentStatusUpdateIn,
     IncidentTriageIn,
     ServiceCheckIn,
@@ -464,3 +467,132 @@ async def update_incident_status(
     await db.commit()
     await db.refresh(incident)
     return incident
+
+
+_AM_SEVERITY_MAP: dict[str, str] = {
+    "critical": "sev1",
+    "page": "sev1",
+    "error": "sev2",
+    "warning": "sev2",
+    "info": "sev3",
+    "low": "sev4",
+}
+
+
+def verify_alertmanager_signature(
+    raw_body: bytes,
+    signature_header: str,
+    settings: Settings,
+) -> None:
+    """Verify HMAC-SHA256 webhook signature over the raw request payload."""
+    is_prod = settings.app_env.strip().lower() == "production"
+    secret = settings.webhook_secret.strip()
+    if is_prod and not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WEBHOOK_SECRET must be configured in production.",
+        )
+    if not secret:
+        return
+
+    cleaned = signature_header.strip()
+    if not cleaned.lower().startswith("sha256="):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or malformed X-Webhook-Signature header.",
+        )
+    actual_hex = cleaned[7:].strip().lower()
+    expected_hex = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(actual_hex, expected_hex):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid X-Webhook-Signature HMAC digest.",
+        )
+
+
+async def process_alertmanager_webhook(
+    db: AsyncSession,
+    *,
+    payload: AlertmanagerWebhookIn,
+) -> AlertmanagerWebhookOut:
+    """Ingest Alertmanager firing alerts (with dedup) or resolve matching active alerts."""
+    actor = Actor(
+        email="alertmanager-webhook@system.local",
+        role="operator",
+        auth_method="webhook_hmac",
+    )
+    firing_ingested = 0
+    deduplicated = 0
+    resolved = 0
+
+    for item in payload.alerts:
+        item_status = (item.status or payload.status or "firing").strip().lower()
+        service_name = (
+            item.labels.get("service")
+            or item.labels.get("job")
+            or item.labels.get("namespace")
+            or "unknown-service"
+        )
+        alert_name = item.labels.get("alertname") or "alertmanager_alert"
+        raw_sev = item.labels.get("severity", "warning").strip().lower()
+        severity = _AM_SEVERITY_MAP.get(raw_sev, "sev2")
+        summary = (
+            item.annotations.get("summary")
+            or item.annotations.get("description")
+            or f"Alertmanager {alert_name} on {service_name}"
+        )
+        fingerprint = compute_alert_fingerprint(service_name, alert_name, "prometheus")
+
+        if item_status == "resolved":
+            active_matches = list(
+                (
+                    await db.execute(
+                        select(TelemetryAlert).where(
+                            TelemetryAlert.fingerprint == fingerprint,
+                            TelemetryAlert.status.in_(["firing", "acknowledged"]),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for match in active_matches:
+                match.status = "resolved"
+                match.last_seen_at = utcnow()
+                resolved += 1
+        else:
+            _, was_dedup = await _upsert_alert_record(
+                db,
+                service_name=service_name,
+                alert_name=alert_name,
+                source="prometheus",
+                severity=severity,
+                metric_value=1.0,
+                threshold_value=0.0,
+                summary=summary,
+            )
+            firing_ingested += 1
+            if was_dedup:
+                deduplicated += 1
+
+    await record_audit_event(
+        db,
+        event_type="telemetry.alertmanager_webhook",
+        actor=actor,
+        entity_type="telemetry_alert",
+        entity_id="alertmanager-batch",
+        action="processed",
+        details={
+            "processed": len(payload.alerts),
+            "firing_ingested": firing_ingested,
+            "deduplicated": deduplicated,
+            "resolved": resolved,
+        },
+    )
+    await db.commit()
+    return AlertmanagerWebhookOut(
+        processed=len(payload.alerts),
+        firing_ingested=firing_ingested,
+        deduplicated=deduplicated,
+        resolved=resolved,
+    )

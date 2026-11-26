@@ -6,17 +6,18 @@ Open-source, self-hosted AI IT administration platform for user provisioning, in
 
 ## Implemented Domain Modules (`backend/app/`)
 
-- `identity/` — Least-privilege RBAC role templates and Joiner/Mover/Leaver SCIM dry-run planner (`GET /templates`, `POST /templates`, `GET /users`, `GET /plans`, `POST /plans/preview`). Directory records and SaaS entitlements remain untouched until an `it_approver` or `admin` approves the pending change.
-- `telemetry/` — Service health, TLS certificate expiry, and storage/quota monitoring (`GET /services`, `POST /services/ingest`), fingerprint-based alert deduplication (`GET /alerts`, `POST /alerts/ingest`), and severity-classified incident triage citing operational runbooks (`GET /incidents`, `POST /incidents/triage`, `PATCH /incidents/{id}/status`).
+- `identity/` — Least-privilege RBAC role templates, Joiner/Mover/Leaver SCIM dry-run planner (`GET /templates`, `POST /templates`, `GET /users`, `GET /plans`, `POST /plans/preview`), and RFC 7644 SCIM 2.0 `BulkRequest` payload export (`GET /plans/{id}/scim-payload`). Directory records and SaaS entitlements remain untouched until an `it_approver` or `admin` approves the pending change.
+- `telemetry/` — Service health, TLS certificate expiry, and storage/quota monitoring (`GET /services`, `POST /services/ingest`), fingerprint-based alert deduplication (`GET /alerts`, `POST /alerts/ingest`), HMAC-SHA256 Alertmanager webhook ingestion (`POST /webhooks/alertmanager`), and severity-classified incident triage citing operational runbooks (`GET /incidents`, `POST /incidents/triage`, `PATCH /incidents/{id}/status`).
 - `access_audit/` — Periodic SaaS entitlement auditing across `saas_entitlements` and `directory_users` (`GET /entitlements`, `POST /entitlements`, `POST /scans`, `GET /scans`, `GET /findings`, `POST /findings/{id}/request-remediation`) detecting orphaned accounts, stale tokens, privilege drift, and missing MFA.
 - `runbooks/` — Deterministic hybrid vector + keyword RAG retrieval (`GET /`, `POST /`, `POST /search`) and citation-grounded incident remediation drafting (`POST /assist`, `GET /drafts`) locked permanently to `execution_mode="advisory_only"` with zero blind shell execution (`guardrails.py`).
-- `governance/` — Unified human-in-the-loop approval queue (`GET /approvals`, `POST /approvals/{id}/decide`), SHA-256 hash-chained operational audit log (`GET /audit/events`, `GET /audit/events/verify`), and outbound cloud secret/PII redaction preview (`POST /pii/redact`).
-- `api/v1/` & `seed/` — Versioned health probes (`/health`, `/health/live`, `/health/ready` with DB readiness), RBAC auth (`/auth/me`, `/auth/token`), cross-module KPI aggregation (`/overview`), and idempotent enterprise demo seeder (`/seed/demo`).
+- `integrations/` — SSRF-guarded outbound notification webhooks (`GET /webhooks`, `POST /webhooks`, `POST /webhooks/{id}/test`) for Slack, PagerDuty, and generic endpoints with outbound `redact_pii()` scrubbing and dry-run previews.
+- `governance/` — Unified human-in-the-loop approval queue (`GET /approvals`, `POST /approvals/{id}/decide`), concurrency-locked SHA-256 hash-chained operational audit log (`GET /audit/events`, `GET /audit/events/verify`), and outbound cloud secret/PII redaction preview (`POST /pii/redact`).
+- `api/v1/`, `core/` & `seed/` — Versioned health probes (`/health`, `/health/live`, `/health/ready` with DB readiness), Prometheus metrics (`/metrics`), sliding-window `RateLimitMiddleware`, structured JSON logging (`structlog`), RBAC auth (`/auth/me`, `/auth/token`), cross-module KPI aggregation (`/overview`), and idempotent enterprise demo seeder (`/seed/demo`).
 
 ## Persistence & Migrations
 
-- **Async SQLAlchemy 2.0 ORM (`backend/app/db/models.py`):** 13 portable tables (`approval_requests`, `directory_users`, `role_templates`, `provisioning_plans`, `service_checks`, `incidents`, `telemetry_alerts`, `saas_entitlements`, `access_audit_runs`, `access_findings`, `runbooks`, `remediation_drafts`, `audit_events`) supporting SQLite (`aiosqlite`) locally and PostgreSQL (`pgvector`, `asyncpg`) in Compose/production.
-- **Alembic (`backend/alembic/`):** Async migration setup with initial schema revision `0001_initial_schema`.
+- **Async SQLAlchemy 2.0 ORM (`backend/app/db/models.py`):** 14 portable tables (`approval_requests`, `directory_users`, `role_templates`, `provisioning_plans`, `service_checks`, `incidents`, `telemetry_alerts`, `saas_entitlements`, `access_audit_runs`, `access_findings`, `runbooks`, `remediation_drafts`, `audit_events`, `notification_webhooks`) supporting SQLite (`aiosqlite`) locally and PostgreSQL (`pgvector`, `asyncpg`) in Compose/production.
+- **Alembic (`backend/alembic/`):** Async migration setup with schema revisions `0001_initial_schema` and `0002_notification_webhooks`.
 
 ## Security & Operational Invariants
 

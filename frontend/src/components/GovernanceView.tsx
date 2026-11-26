@@ -1,12 +1,21 @@
 import { useState } from 'react';
-import { Check, EyeOff, ShieldCheck, X } from 'lucide-react';
-import { decideApproval, redactPiiText, verifyAuditChain } from '../api/client';
+import { Activity, Bell, Check, EyeOff, ShieldCheck, X } from 'lucide-react';
+import {
+  createNotificationWebhook,
+  decideApproval,
+  fetchPrometheusMetrics,
+  redactPiiText,
+  testNotificationWebhook,
+  verifyAuditChain,
+} from '../api/client';
 import type {
   ActorContext,
   ApprovalRequestItem,
   AuditChainVerify,
   AuditEventItem,
+  NotificationWebhook,
   PiiRedactResult,
+  WebhookTestResult,
 } from '../types/itAdmin';
 import { StatusBadge } from './StatusBadge';
 
@@ -15,6 +24,7 @@ interface GovernanceViewProps {
   approvals: ApprovalRequestItem[];
   auditEvents: AuditEventItem[];
   chainStatus: AuditChainVerify | null;
+  webhooks: NotificationWebhook[];
   onChainVerified: (status: AuditChainVerify) => void;
   onRefresh: () => Promise<void>;
   onNotify: (text: string, isError?: boolean) => void;
@@ -25,6 +35,7 @@ export function GovernanceView({
   approvals,
   auditEvents,
   chainStatus,
+  webhooks,
   onChainVerified,
   onRefresh,
   onNotify,
@@ -34,9 +45,15 @@ export function GovernanceView({
     'Incident log for alice@acme-it.local on 10.24.0.15 with AWS AKIA1234567890ABCDEF and token=ghp_supersecret1234567890ab',
   );
   const [piiResult, setPiiResult] = useState<PiiRedactResult | null>(null);
+  const [webhookName, setWebhookName] = useState('');
+  const [webhookChannel, setWebhookChannel] = useState<'slack' | 'pagerduty' | 'generic'>('slack');
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookTestResult, setWebhookTestResult] = useState<WebhookTestResult | null>(null);
+  const [metricsText, setMetricsText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const canApprove = actor.role === 'it_approver' || actor.role === 'admin';
+  const canMutate = actor.role !== 'viewer';
 
   async function handleDecision(approvalId: string, decision: 'approved' | 'rejected') {
     setBusy(true);
@@ -73,6 +90,58 @@ export function GovernanceView({
       onNotify(`Scrubbed ${res.total_redactions} sensitive token(s)/PII item(s).`);
     } catch (err) {
       onNotify(err instanceof Error ? err.message : 'PII redaction preview failed', true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCreateWebhook(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await createNotificationWebhook(actor, {
+        name: webhookName.trim(),
+        channel_type: webhookChannel,
+        target_url: webhookUrl.trim(),
+      });
+      setWebhookName('');
+      setWebhookUrl('');
+      onNotify('Registered SSRF-validated notification webhook.');
+      await onRefresh();
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Webhook registration failed', true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDryRunWebhook(webhookId: string) {
+    setBusy(true);
+    try {
+      const res = await testNotificationWebhook(
+        actor,
+        webhookId,
+        'Incident triage alert for alice@acme-it.local on host 10.24.0.15',
+        true,
+      );
+      setWebhookTestResult(res);
+      onNotify(`Webhook dry-run complete (${res.delivery_status}, ${res.pii_redacted_count} PII scrubbed).`);
+      await onRefresh();
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Webhook test failed', true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleLoadMetrics() {
+    setBusy(true);
+    try {
+      const txt = await fetchPrometheusMetrics();
+      setMetricsText(txt);
+      onNotify('Fetched Prometheus /api/v1/metrics snapshot.');
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Metrics fetch failed', true);
     } finally {
       setBusy(false);
     }
@@ -161,6 +230,111 @@ export function GovernanceView({
             ))
           )}
         </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Bell className="h-4 w-4 text-indigo-600" />
+            <h3 className="text-sm font-semibold text-slate-900">
+              SSRF-Guarded Notification Webhooks (Slack / PagerDuty) ({webhooks.length})
+            </h3>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={handleLoadMetrics}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+          >
+            <Activity className="h-3.5 w-3.5" />
+            View Prometheus Metrics
+          </button>
+        </div>
+
+        <form onSubmit={handleCreateWebhook} className="mt-3 grid gap-2.5 sm:grid-cols-4">
+          <input
+            aria-label="Webhook Name"
+            placeholder="PagerDuty Oncall"
+            required
+            value={webhookName}
+            onChange={(e) => setWebhookName(e.target.value)}
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs"
+          />
+          <select
+            aria-label="Webhook Channel"
+            value={webhookChannel}
+            onChange={(e) =>
+              setWebhookChannel(e.target.value as 'slack' | 'pagerduty' | 'generic')
+            }
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs"
+          >
+            <option value="slack">Slack</option>
+            <option value="pagerduty">PagerDuty</option>
+            <option value="generic">Generic Webhook</option>
+          </select>
+          <input
+            aria-label="Webhook Target URL"
+            placeholder="https://hooks.slack.com/services/..."
+            required
+            value={webhookUrl}
+            onChange={(e) => setWebhookUrl(e.target.value)}
+            className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs sm:col-span-2"
+          />
+          <button
+            type="submit"
+            disabled={busy || !canApprove}
+            className="rounded-lg bg-slate-900 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-40 sm:col-span-4"
+          >
+            Register SSRF-Validated Webhook
+          </button>
+        </form>
+
+        <div className="mt-3 space-y-2">
+          {webhooks.map((wh) => (
+            <div
+              key={wh.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs"
+            >
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-slate-900">{wh.name}</span>
+                  <StatusBadge value={wh.channel_type} />
+                  {wh.last_delivery_status && <StatusBadge value={wh.last_delivery_status} />}
+                </div>
+                <p className="mt-0.5 font-mono text-[11px] text-slate-500">{wh.target_url}</p>
+              </div>
+              <button
+                type="button"
+                disabled={busy || !canMutate}
+                onClick={() => handleDryRunWebhook(wh.id)}
+                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
+              >
+                Dry-Run Test
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {webhookTestResult && (
+          <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs">
+            <p className="font-semibold text-indigo-950">
+              Webhook Dry-Run Preview ({webhookTestResult.delivery_status}) · Redacted{' '}
+              {webhookTestResult.pii_redacted_count} PII item(s)
+            </p>
+            <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-slate-900 p-2 font-mono text-[11px] text-emerald-300">
+              {JSON.stringify(webhookTestResult.payload_preview, null, 2)}
+            </pre>
+          </div>
+        )}
+
+        {metricsText && (
+          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-3 text-[11px] text-emerald-300">
+            <div className="mb-1 font-semibold text-slate-200">
+              Prometheus Exposition (/api/v1/metrics)
+            </div>
+            <pre className="max-h-48 overflow-auto font-mono">{metricsText}</pre>
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

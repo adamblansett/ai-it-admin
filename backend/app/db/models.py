@@ -342,3 +342,29 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow
     )
+
+
+class NotificationWebhook(Base):
+    """SSRF-guarded outbound notification webhook connector (Slack/PagerDuty/generic)."""
+
+    __tablename__ = "notification_webhooks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    channel_type: Mapped[str] = mapped_column(String(32), nullable=False, default="slack")
+    target_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    subscribed_events_json: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    signing_secret_configured: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    last_delivery_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
